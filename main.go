@@ -29,15 +29,14 @@ type ChunkData struct {
 }
 
 func main() {
-	if os.Getenv("IsDev") == "" {
-		fmt.Println("Running on Dev")
-		url = "https://localhost:" + PORT
-	}
+	fmt.Println("NO SUCH THING AS ONE HTTP CALLING ANOTHER ON SAME ENDPOINT LOCALHOST, but in cloud it works :)")
 	http.HandleFunc("/Sum", Sum)
 	http.HandleFunc("/Sum2", Sum2)
 	http.HandleFunc("/Hello", Hello)
 	http.HandleFunc("/IsDev", IsDev)
 	http.HandleFunc("/TestJson", TestJson)
+	http.HandleFunc("/PostSum", PostSum)
+	http.HandleFunc("/RecursivePost", RecursivePost)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -115,7 +114,7 @@ func TestJson(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "Done")
 }
 
-func PostToSum(w http.ResponseWriter, r *http.Request) {
+func PostSum(w http.ResponseWriter, r *http.Request) {
 	dts, err := json.Marshal(ChunkData{Msg: "I am initialized"})
 	handleErr(&w, err)
 
@@ -133,6 +132,42 @@ func PostToSum(w http.ResponseWriter, r *http.Request) {
 	handleErr(&w, err)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	err = json.NewEncoder(w).Encode(body)
+	handleErr(&w, err)
+}
+
+func RecursivePost(w http.ResponseWriter, r *http.Request) {
+	var bodyIn ChunkData
+	err := json.NewDecoder(r.Body).Decode(&bodyIn)
+	if err != nil {
+		bodyIn = ChunkData{Start: 9, Msg: "Opening:"}
+	}
+
+	bodyIn.Start--
+
+	if bodyIn.Start <=1 || bodyIn.Start >= 10 {
+		bodyIn.Msg = bodyIn.Msg + "+:Closing"
+		encodeStruct(&w, bodyIn)
+		return
+	} else {
+		bodyIn.Msg += "+"
+	}
+
+	dts, err := json.Marshal(bodyIn)
+	handleErr(&w, err)
+
+	res, err := http.Post(url + "/RecursivePost", "application/json", bytes.NewBuffer(dts))
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+	defer res.Body.Close()
+
+	//read data into json
+	var bodyOut ChunkData
+	err = json.NewDecoder(res.Body).Decode(&bodyOut)
+	handleErr(&w, err)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	err = json.NewEncoder(w).Encode(bodyOut)
 	handleErr(&w, err)
 }
 
