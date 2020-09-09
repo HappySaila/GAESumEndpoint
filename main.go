@@ -2,13 +2,10 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -69,9 +66,9 @@ func IsDev(w http.ResponseWriter, r *http.Request) {
 // Sum will add the total of n integers
 func Sum(w http.ResponseWriter, r *http.Request) {
 	res, err := http.Get(url + "/Sum2")
+	fmt.Println(url)
 	if err != nil {
-		fmt.Println("errr")
-		fmt.Println(err)
+		fmt.Println(err.Error())
 		return
 	}
 	defer res.Body.Close()
@@ -83,29 +80,25 @@ func Sum(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	err = json.NewEncoder(w).Encode(body)
 	handleErr(&w, err)
-	fmt.Fprint(w, "Donne")
 }
 
 func Sum2(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	data := ChunkData{
+	encodeStruct(&w, ChunkData{
 		End: 7,
 		Start: 7,
 		Total: 7,
-	}
-	json.NewEncoder(w).Encode(data)
+	})
 }
 
 func TestJson(w http.ResponseWriter, r *http.Request) {
 	res, err := http.Get("https://jsonplaceholder.typicode.com/todos/1")
 	if err != nil {
-		fmt.Println("err")
 		fmt.Println(err.Error())
 		return
 	}
 	defer res.Body.Close()
 
-	//read data into json
+	//decode HTTP body into golang struct
 	var body TestData
 	err = json.NewDecoder(res.Body).Decode(&body)
 	handleErr(&w, err)
@@ -151,73 +144,4 @@ func handleErr(w *http.ResponseWriter, err error) {
 		fmt.Fprint(*w, "Err")
 		fmt.Fprint(*w, err.Error())
 	}
-}
-
-//helpers to decode
-type malformedRequest struct {
-	status int
-	msg    string
-}
-
-func (mr *malformedRequest) Error() string {
-	return mr.msg
-}
-
-func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst interface{}) error {
-	if r.Header.Get("Content-Type") != "" {
-		value := r.Header.Get("Content-Type")
-		if value != "application/json" {
-			msg := "Content-Type header is not application/json"
-			return &malformedRequest{status: http.StatusUnsupportedMediaType, msg: msg}
-		}
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
-
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-
-	err := dec.Decode(&dst)
-	if err != nil {
-		var syntaxError *json.SyntaxError
-		var unmarshalTypeError *json.UnmarshalTypeError
-
-		switch {
-		case errors.As(err, &syntaxError):
-			msg := fmt.Sprintf("Request body contains badly-formed JSON (at position %d)", syntaxError.Offset)
-			return &malformedRequest{status: http.StatusBadRequest, msg: msg}
-
-		case errors.Is(err, io.ErrUnexpectedEOF):
-			msg := fmt.Sprintf("Request body contains badly-formed JSON")
-			return &malformedRequest{status: http.StatusBadRequest, msg: msg}
-
-		case errors.As(err, &unmarshalTypeError):
-			msg := fmt.Sprintf("Request body contains an invalid value for the %q field (at position %d)", unmarshalTypeError.Field, unmarshalTypeError.Offset)
-			return &malformedRequest{status: http.StatusBadRequest, msg: msg}
-
-		case strings.HasPrefix(err.Error(), "json: unknown field "):
-			fieldName := strings.TrimPrefix(err.Error(), "json: unknown field ")
-			msg := fmt.Sprintf("Request body contains unknown field %s", fieldName)
-			return &malformedRequest{status: http.StatusBadRequest, msg: msg}
-
-		case errors.Is(err, io.EOF):
-			msg := "Request body must not be empty"
-			return &malformedRequest{status: http.StatusBadRequest, msg: msg}
-
-		case err.Error() == "http: request body too large":
-			msg := "Request body must not be larger than 1MB"
-			return &malformedRequest{status: http.StatusRequestEntityTooLarge, msg: msg}
-
-		default:
-			return err
-		}
-	}
-
-	err = dec.Decode(&struct{}{})
-	if err != io.EOF {
-		msg := "Request body must only contain a single JSON object"
-		return &malformedRequest{status: http.StatusBadRequest, msg: msg}
-	}
-
-	return nil
 }
