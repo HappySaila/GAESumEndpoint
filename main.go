@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -24,6 +25,7 @@ type ChunkData struct {
 	Start int64 `json:"start"`
 	End int64 `json:"end"`
 	Total int64 `json:"total"`
+	Msg string `json:"msg"`
 }
 
 func main() {
@@ -83,10 +85,15 @@ func Sum(w http.ResponseWriter, r *http.Request) {
 }
 
 func Sum2(w http.ResponseWriter, r *http.Request) {
+	var body ChunkData
+	err := json.NewDecoder(r.Body).Decode(&body)
+	handleErr(&w, err)
+
 	encodeStruct(&w, ChunkData{
 		End: 7,
 		Start: 7,
 		Total: 7,
+		Msg: body.Msg,
 	})
 }
 
@@ -106,6 +113,27 @@ func TestJson(w http.ResponseWriter, r *http.Request) {
 	err = json.NewEncoder(w).Encode(body)
 	handleErr(&w, err)
 	fmt.Fprint(w, "Done")
+}
+
+func PostToSum(w http.ResponseWriter, r *http.Request) {
+	dts, err := json.Marshal(ChunkData{Msg: "I am initialized"})
+	handleErr(&w, err)
+
+	res, err := http.Post(url + "/Sum2", "application/json", bytes.NewBuffer(dts))
+	fmt.Println(url)
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+	defer res.Body.Close()
+
+	//read data into json
+	var body ChunkData
+	err = json.NewDecoder(res.Body).Decode(&body)
+	handleErr(&w, err)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	err = json.NewEncoder(w).Encode(body)
+	handleErr(&w, err)
 }
 
 func SequencialSum(arr []int64) int64 {
