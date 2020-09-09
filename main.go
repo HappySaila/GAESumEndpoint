@@ -47,21 +47,19 @@ func main() {
 	}
 
 	log.Printf("Listening on port %s", port)
-	//go func() {
-		if err := http.ListenAndServe(":"+port, nil); err != nil {
-			log.Fatal(err)
-		}
-		fmt.Println("Nice")
-	//}()
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Nice")
 }
 
 func Hello(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(ChunkData{
-		End: 9,
-		Start: 10,
-		Total: 9,
-	})
+	encodeStruct(&w, ChunkData{Start: 777})
+}
+
+func encodeStruct(w *http.ResponseWriter, obj interface{}) {
+	(*w).Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(*w).Encode(obj)
 }
 
 func IsDev(w http.ResponseWriter, r *http.Request) {
