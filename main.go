@@ -13,7 +13,8 @@ import (
 )
 
 var p = fmt.Println
-var PORT = "8083"
+var PORT = "8085"
+var url = "https://gae-by-endpoint.uc.r.appspot.com"
 
 type TestData struct {
 	UserId  int `json:"userId"`
@@ -29,9 +30,15 @@ type ChunkData struct {
 }
 
 func main() {
+	if os.Getenv("IsDev") == "" {
+		fmt.Println("Running on Dev")
+		url = "https://localhost:" + PORT
+	}
 	http.HandleFunc("/Sum", Sum)
 	http.HandleFunc("/Sum2", Sum2)
 	http.HandleFunc("/Hello", Hello)
+	http.HandleFunc("/IsDev", IsDev)
+	http.HandleFunc("/TestJson", TestJson)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -40,18 +47,59 @@ func main() {
 	}
 
 	log.Printf("Listening on port %s", port)
-	go func() {
+	//go func() {
 		if err := http.ListenAndServe(":"+port, nil); err != nil {
 			log.Fatal(err)
 		}
 		fmt.Println("Nice")
-	}()
+	//}()
+}
 
-	fmt.Println("Sleeping for 3 seconds before making HTTP req")
-	time.Sleep(time.Second *3)
-	//test
-	//res, err := http.Get("https://jsonplaceholder.typicode.com/todos/1")
-	res, err := http.Get("https://localhost:8083/Sum2")
+func Hello(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(ChunkData{
+		End: 9,
+		Start: 10,
+		Total: 9,
+	})
+}
+
+func IsDev(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprint(w, os.Getenv("IsDev") != "")
+}
+
+// Sum will add the total of n integers
+func Sum(w http.ResponseWriter, r *http.Request) {
+	res, err := http.Get(url + "/Sum2")
+	if err != nil {
+		fmt.Println("errr")
+		fmt.Println(err)
+		return
+	}
+	defer res.Body.Close()
+
+	//read data into json
+	var body ChunkData
+	err = json.NewDecoder(res.Body).Decode(&body)
+	handleErr(&w, err)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	err = json.NewEncoder(w).Encode(body)
+	handleErr(&w, err)
+	fmt.Fprint(w, "Donne")
+}
+
+func Sum2(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	data := ChunkData{
+		End: 7,
+		Start: 7,
+		Total: 7,
+	}
+	json.NewEncoder(w).Encode(data)
+}
+
+func TestJson(w http.ResponseWriter, r *http.Request) {
+	res, err := http.Get("https://jsonplaceholder.typicode.com/todos/1")
 	if err != nil {
 		fmt.Println("err")
 		fmt.Println(err.Error())
@@ -59,71 +107,14 @@ func main() {
 	}
 	defer res.Body.Close()
 
-	//read try 1 - got the bytes, but not the values
-	//body, err := ioutil.ReadAll(res.Body)
-	//handleErr(&w, err)
-	//fmt.Fprint(w, body)
-
-	//read try 2 - EOF err
+	//read data into json
 	var body TestData
 	err = json.NewDecoder(res.Body).Decode(&body)
-	fmt.Println(body)
-	fmt.Println(body.Title)
-
-	//read try 3
-	//var body TestData
-	//dec := json.NewDecoder(res.Body)
-	//dec.DisallowUnknownFields()
-	//err = dec.Decode(&body)
-	//if err != nil {
-	//	fmt.Println(err.Error())
-	//	return
-	//}
-	//fmt.Println("Here is body")
-	//fmt.Print(body)
-}
-
-func Hello(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(ChunkData{
-		End: 9,
-		Start: 10,
-		Total: 9,
-	})
-}
-
-// Sum will add the total of n integers
-func Sum(w http.ResponseWriter, r *http.Request) {
-	res, err := http.Get("https://jsonplaceholder.typicode.com/todos/1")
-	if err != nil {
-		fmt.Fprint(w, "err")
-		fmt.Fprint(w, err.Error())
-	}
-	defer res.Body.Close()
-
-	//read try 1 - got the bytes, but not the values
-	//body, err := ioutil.ReadAll(res.Body)
-	//handleErr(&w, err)
-	//fmt.Fprint(w, body)
-
-	//read try 2 - EOF err
-	//var body TestData
-	//err = json.NewDecoder(r.Body).Decode(&body)
-	//handleErr(&w, err)
-
-	//read try 3
-	var body TestData
-	err = decodeJSONBody(w, r, &body)
 	handleErr(&w, err)
-	fmt.Fprint(w, body)
-}
-
-func Sum2(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(ChunkData{
-		End: 9,
-		Start: 10,
-		Total: 9,
-	})
+	err = json.NewEncoder(w).Encode(body)
+	handleErr(&w, err)
+	fmt.Fprint(w, "Done")
 }
 
 func SequencialSum(arr []int64) int64 {
