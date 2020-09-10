@@ -12,6 +12,7 @@
 # below:
 .git
 .gitignore
+vendor/
 
 # Binaries for programs and plugins
 *.exe

@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"cloud.google.com/go/logging"
+	"context"
 	"encoding/json"
 	"fmt"
+	ltype "google.golang.org/genproto/googleapis/logging/type"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -37,6 +41,9 @@ func main() {
 	http.HandleFunc("/TestJson", TestJson)
 	http.HandleFunc("/PostSum", PostSum)
 	http.HandleFunc("/RecursivePost", RecursivePost)
+	http.HandleFunc("/TestGlog", TestGlog)
+	http.HandleFunc("/ParallelSumStart", ParallelSumStart)
+	http.HandleFunc("/ParallelSum", ParallelSum)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -171,35 +178,106 @@ func RecursivePost(w http.ResponseWriter, r *http.Request) {
 	handleErr(&w, err)
 }
 
-func SequencialSum(arr []int64) int64 {
-	total := int64(0)
-	for _, v := range arr {
-		total = total + int64(v)
-		time.Sleep(time.Millisecond)
-	}
-	return total
+type ParallelData struct {
+	Bucket string `json:"bucket"`
+	Start int `json:"start"`
+	End int `json:"end"`
+	Total int64 `json:"total"`
+	Thresh int `json:"thresh"`
 }
 
-func ParrellelSum(arr []int64, thresh int, start int, end int, result chan int64) {
-	if end - start <= thresh {
-		result <- SequencialSum(arr[start:end])
+func ParallelSumStart(w http.ResponseWriter, r *http.Request) {
+	gLog("Program Start!", nil)
+	// Initialize the Parallel Sum
+	data := ParallelData{
+		Bucket: "Bucket1000",
+		Start: 0,
+		End: 1000,
+		Total: 0,
+		Thresh: 70,
+	}
+
+	dts, err := json.Marshal(data)
+	handleErr(&w, err)
+	res, err := http.Post(url + "/ParallelSum", "application/json", bytes.NewBuffer(dts))
+	var bodyOut ParallelData
+	err = json.NewDecoder(res.Body).Decode(&bodyOut)
+	handleErr(&w, err)
+	encodeStruct(&w, bodyOut)
+	gLog("Program End!", nil)
+}
+
+func SequencialSum(data ParallelData) ParallelData {
+	// Read file from datastore
+
+	// Read data from file into transaction[] and process
+	gLog(fmt.Sprintf("Processing in: %s, out: %s", data.Start, data.End), nil)
+	data.Total = 1
+	return data
+}
+
+func ParallelSum(w http.ResponseWriter, r *http.Request) {
+	gLog("Start thread PS\n", nil)
+	// Unpack data sent from parent
+	var bodyIn ParallelData
+	err := json.NewDecoder(r.Body).Decode(&bodyIn)
+	if err != nil {
+		fmt.Fprint(w, err.Error())
+		return
+	}
+
+	gLog("Check Thresh\n", nil)
+	gLog(fmt.Sprintf("Current in: %s, out: %s", bodyIn.Start, bodyIn.End), nil)
+	// Get data from storage bucket
+	var bodyOut ParallelData
+	if bodyIn.End - bodyIn.Start <= bodyIn.Thresh {
+		bodyOut = SequencialSum(bodyIn)
+		encodeStruct(&w, bodyOut)
 		return
 	}
 
 	subResult := make(chan int64)
 	subResult2 := make(chan int64)
+	boundary := (bodyIn.Start + bodyIn.End)/2
+	gLog(fmt.Sprintf("Boundary: %s Thresh\n", boundary), nil)
 
-	go func(arr []int64, thresh int, start int, end int) {
-		p("Goroutine spawned")
-		ParrellelSum(arr, thresh, start, (start+end)/2, subResult)
-	}(arr, thresh, start, end)
+	go func(data ParallelData) {
+		data.End = boundary
+		gLog(fmt.Sprintf("1start: %s, end: %s", data.Start, data.End), nil)
+		dts, err := json.Marshal(data)
+		handleErr(&w, err)
+		res, err := http.Post(url + "/ParallelSum", "application/json", bytes.NewBuffer(dts))
+		handleErr(&w, err)
 
-	go func(arr []int64, thresh int, start int, end int) {
-		p("Goroutine spawned")
-		ParrellelSum(arr, thresh, (start+end)/2, end, subResult2)
-	}(arr, thresh, start, end)
+		// Bubble up child call
+		var childBodyIn ParallelData
+		err = json.NewDecoder(res.Body).Decode(&childBodyIn)
+		handleErr(&w, err)
+
+		subResult <- childBodyIn.Total
+	}(bodyIn)
+
+	go func(data ParallelData) {
+		data.Start = boundary
+		gLog(fmt.Sprintf("2start: %s, end: %s", data.Start, data.End), nil)
+		dts, err := json.Marshal(data)
+		handleErr(&w, err)
+		res, err := http.Post(url + "/ParallelSum", "application/json", bytes.NewBuffer(dts))
+		handleErr(&w, err)
+
+		// Bubble up child call
+		var childBodyIn ParallelData
+		err = json.NewDecoder(res.Body).Decode(&childBodyIn)
+		handleErr(&w, err)
+
+		subResult2 <- childBodyIn.Total
+	}(bodyIn)
+
+	gLog("Adding Values\n", nil)
 	val := <-subResult + <-subResult2
-	result <- val
+	bodyOut.Total = val
+	bodyOut.Bucket += "+"
+	encodeStruct(&w, bodyOut)
 }
 
 func handleErr(w *http.ResponseWriter, err error) {
@@ -207,4 +285,41 @@ func handleErr(w *http.ResponseWriter, err error) {
 		fmt.Fprint(*w, "Err")
 		fmt.Fprint(*w, err.Error())
 	}
+}
+
+func gLog(text string, severity *ltype.LogSeverity) {
+	ctx := context.Background()
+
+	// Creates a client.
+	client, err := logging.NewClient(ctx, "gae-by-endpoint")
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+
+	// Sets log name to unix nano second
+	logger := client.Logger(strconv.Itoa(int(time.Now().UnixNano())))
+
+	// Set severity based on params. Default Severity: DEBUG
+	var logSeverity logging.Severity
+	if severity == nil {
+		logSeverity = logging.Severity(ltype.LogSeverity_DEBUG)
+	} else {
+		logSeverity = logging.Severity(*severity)
+	}
+
+	// Adds an entry to the log buffer.
+	logger.Log(logging.Entry{
+		Payload: text,
+		Severity: logSeverity,
+	})
+
+	// Closes the client and flushes the buffer to the Stackdriver Logging
+	// service.
+	if err := client.Close(); err != nil {
+		log.Fatalf("Failed to close client: %v", err)
+	}
+}
+
+func TestGlog(w http.ResponseWriter, r *http.Request) {
+	gLog("HELLO GLOG TEST", nil)
 }
